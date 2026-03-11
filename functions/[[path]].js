@@ -2,6 +2,7 @@ export async function onRequest({ request, params, env }) {
   try {
     const { pathname: path, searchParams } = new URL(request.url)
     const rpath = params.path
+    console.log('path:' + path)
 
     if (request.method == 'OPTIONS') {
       return new Response(null, { status: 200, headers: corsHeaders({ 'Access-Control-Max-Age': '86400' }) });
@@ -34,7 +35,7 @@ export async function onRequest({ request, params, env }) {
     } else if (targetUrl) { // 代理地址
       return handleProxy(request, targetUrl, searchParams, request.method);
     } else if (cnb_url){ 
-        return handleProxy(request, cnb_url, searchParams, request.method);
+        return handleProxy(request, cnb_url + (path === '/' ? '' : path), searchParams, request.method);
     } else { // 默认首页
       // return Response.redirect('/index.html', 301);
       const html = `Hello World, 未配置cnb_url, ${JSON.stringify({path, targetUrl, debug})}`
