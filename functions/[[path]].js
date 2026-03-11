@@ -46,7 +46,58 @@ export async function onRequest({ request, params, env }) {
   }
 }
 
-async function handleProxy(request, targetUrl, searchParams, method) {
+async function handleProxy(request, targetUrl, method) {
+  const reqUrl = new URL(request.url)
+  const host = reqUrl.searchParams.get('host')
+  const referer = reqUrl.searchParams.get('referer')
+
+  const body = (method === 'GET' || method === 'HEAD') ? null : request.body
+  const headers = new Headers(request.headers)
+
+  headers.delete('host')
+  if (host) headers.set('Host', host.trim())
+  if (referer) headers.set('Referer', referer.trim())
+
+  // 对流式接口尽量禁用压缩，减少缓冲
+  headers.set('Accept-Encoding', 'identity')
+
+  try {
+    const res = await fetch(targetUrl, {
+      method,
+      headers,
+      body,
+    })
+
+    const resHeaders = new Headers(res.headers)
+
+    // SSE 场景尽量关闭缓存和中间层缓冲
+    if ((resHeaders.get('content-type') || '').includes('text/event-stream')) {
+      resHeaders.set('Content-Type', 'text/event-stream; charset=utf-8')
+      resHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate')
+      resHeaders.set('Pragma', 'no-cache')
+      resHeaders.set('Expires', '0')
+      resHeaders.set('Connection', 'keep-alive')
+      resHeaders.set('X-Accel-Buffering', 'no')
+    } else {
+      resHeaders.set('Cache-Control', 'no-store')
+    }
+
+    corsHeaders(resHeaders)
+
+    return new Response(res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: resHeaders,
+    })
+  } catch (e) {
+    return new Response(`Error Proxy: ${e.message}`, {
+      status: 502,
+      headers: corsHeaders(),
+    })
+  }
+}
+
+async function handleProxyOld(request, targetUrl, searchParams, method) {
     const host = searchParams.get('host')
     const referer = searchParams.get('referer')
     const body = (method == 'GET' || method == 'HEAD') ? null : request.body; // GET 或 HEAD 请求，body 必须为 null
