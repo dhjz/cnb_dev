@@ -26,7 +26,7 @@ export async function onRequest({ request, params, env }) {
     const val = searchParams.get('value') || searchParams.get('val') || searchParams.get('v')
     if (path == '/setUrl') { // 设置KV
       if (val) await kv_cnb.put('cnb_url', val)
-      return new Response(`设置成功: ${key}, ${val}`, { headers: { 'Content-Type': 'text/plain; charset=UTF-8' } })
+      return new Response(`设置成功: 'cnb_url', ${val}`, { headers: { 'Content-Type': 'text/plain; charset=UTF-8' } })
     } else if (path == '/getUrl') { // 获取KV值
       return new Response(await kv_cnb.get('cnb_url'), { headers: { 'Content-Type': 'text/plain; charset=UTF-8' } }) 
     }
