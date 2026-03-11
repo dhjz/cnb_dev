@@ -46,55 +46,57 @@ export async function onRequest({ request, params, env }) {
   }
 }
 
-async function handleProxy(request, targetUrl, method) {
-  const reqUrl = new URL(request.url)
-  const host = reqUrl.searchParams.get('host')
-  const referer = reqUrl.searchParams.get('referer')
+async function handleProxy(request, targetUrl, searchParams, method) {
+    const host = searchParams.get('host')
+    const referer = searchParams.get('referer')
+    const body = (method == 'GET' || method == 'HEAD') ? null : request.body; 
+    const headers = new Headers(request.headers);
+    
+    headers.delete('host');
+    // 【关键1】明确告诉目标服务器：不要压缩！压缩会导致必须缓冲一定量才能解压
+    headers.set('Accept-Encoding', 'identity'); 
+    
+    host && headers.set('Host', host.trim());
+    referer && headers.set('Referer', referer.trim());
 
-  const body = (method === 'GET' || method === 'HEAD') ? null : request.body
-  const headers = new Headers(request.headers)
+    try {
+      const res = await fetch(targetUrl, { method, headers, body}); 
 
-  headers.delete('host')
-  if (host) headers.set('Host', host.trim())
-  if (referer) headers.set('Referer', referer.trim())
+      // 判断是否为流式响应 (OpenAPI 流式标准格式为 text/event-stream)
+      const contentType = res.headers.get('content-type') || '';
+      const isStream = contentType.includes('text/event-stream') || res.body instanceof ReadableStream;
 
-  // 对流式接口尽量禁用压缩，减少缓冲
-  headers.set('Accept-Encoding', 'identity')
+      if (isStream && res.body) {
+        const resHeaders = new Headers(res.headers);
+        
+        // 【关键2】设置严格的防缓冲、防缓存响应头
+        resHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        resHeaders.set('Connection', 'keep-alive');
+        resHeaders.set('X-Accel-Buffering', 'no'); // 告诉 Nginx/CDN 等反向代理不要缓冲
+        resHeaders.delete('Content-Encoding'); // 确保发给客户端的数据没有标记为压缩
+        resHeaders.delete('Content-Length'); // 流式传输不应该有固定长度
 
-  try {
-    const res = await fetch(targetUrl, {
-      method,
-      headers,
-      body,
-    })
+        // 【关键3】使用 TransformStream 强制按块透传
+        // 直接传递 res.body 有时仍会被底层 JS 引擎隐式缓冲，使用 TransformStream 可以强制即时刷出
+        const { readable, writable } = new TransformStream();
+        res.body.pipeTo(writable).catch(err => console.error('Stream pipe error:', err));
 
-    const resHeaders = new Headers(res.headers)
-
-    // SSE 场景尽量关闭缓存和中间层缓冲
-    if ((resHeaders.get('content-type') || '').includes('text/event-stream')) {
-      resHeaders.set('Content-Type', 'text/event-stream; charset=utf-8')
-      resHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate')
-      resHeaders.set('Pragma', 'no-cache')
-      resHeaders.set('Expires', '0')
-      resHeaders.set('Connection', 'keep-alive')
-      resHeaders.set('X-Accel-Buffering', 'no')
-    } else {
-      resHeaders.set('Cache-Control', 'no-store')
+        // 假设 corsHeaders 会修改并返回 Headers 对象
+        return new Response(readable, { 
+            status: res.status, 
+            headers: corsHeaders(resHeaders) 
+        });
+        
+      } else {
+        const resHeaders = new Headers(res.headers);
+        return new Response(res.body, { 
+            status: res.status, 
+            headers: corsHeaders(resHeaders) 
+        });
+      }
+    } catch (e) {
+      return new Response(`Error Proxy: ${e.message}`, { status: 502, headers: corsHeaders(new Headers()) });
     }
-
-    corsHeaders(resHeaders)
-
-    return new Response(res.body, {
-      status: res.status,
-      statusText: res.statusText,
-      headers: resHeaders,
-    })
-  } catch (e) {
-    return new Response(`Error Proxy: ${e.message}`, {
-      status: 502,
-      headers: corsHeaders(),
-    })
-  }
 }
 
 async function handleProxyOld(request, targetUrl, searchParams, method) {
