@@ -46,7 +46,7 @@ export async function onRequest({ request, params, env }) {
   }
 }
 
-async function handleProxyOld(request, targetUrl, searchParams, method) {
+async function handleProxy(request, targetUrl, searchParams, method) {
     const host = searchParams.get('host')
     const referer = searchParams.get('referer')
     const body = (method == 'GET' || method == 'HEAD') ? null : request.body; // GET 或 HEAD 请求，body 必须为 null
