@@ -46,72 +46,30 @@ export async function onRequest({ request, params, env }) {
   }
 }
 
-async function handleProxy(request, targetUrl, searchParams, method) {
-    const host = searchParams.get('host');
-    const referer = searchParams.get('referer');
-    const body = (method === 'GET' || method === 'HEAD') ? null : request.body;
+async function handleProxyOld(request, targetUrl, searchParams, method) {
+    const host = searchParams.get('host')
+    const referer = searchParams.get('referer')
+    const body = (method == 'GET' || method == 'HEAD') ? null : request.body; // GET 或 HEAD 请求，body 必须为 null
     const headers = new Headers(request.headers);
-    
     headers.delete('host');
-    // 【关键1】明确告知上游：不压缩，并且期望接收 SSE 流
-    headers.set('Accept-Encoding', 'identity');
-    headers.set('Accept', 'text/event-stream'); 
-    
+    headers.delete('Accept-Encoding');
     host && headers.set('Host', host.trim());
     referer && headers.set('Referer', referer.trim());
 
     try {
-      const res = await fetch(targetUrl, { method, headers, body });
+      const res = await fetch(targetUrl, { method, headers, body}); // redirect: 'follow', // 自动处理重定向
 
-      // 判断是否为流式响应
-      const contentType = res.headers.get('content-type') || '';
-      const isStream = contentType.includes('text/event-stream') || contentType.includes('application/stream+json');
-
-      if (isStream && res.body) {
-        const resHeaders = new Headers(res.headers);
-        resHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-        resHeaders.set('Connection', 'keep-alive');
-        resHeaders.set('X-Accel-Buffering', 'no');
-        resHeaders.delete('Content-Encoding');
-        resHeaders.delete('Content-Length');
-
-        // 【关键2】使用手动泵 (Manual Pumping) 替代 pipeTo
-        const { readable, writable } = new TransformStream();
-        const writer = writable.getWriter();
-        const reader = res.body.getReader();
-
-        // 异步执行读写循环，不阻塞当前响应返回
-        (async () => {
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) {
-                await writer.close();
-                break;
-              }
-              // 读到一个 chunk，立刻写入客户端
-              await writer.write(value);
-            }
-          } catch (err) {
-            console.error('Stream processing error:', err);
-            await writer.abort(err);
-          }
-        })();
-
-        return new Response(readable, { 
-            status: res.status, 
-            headers: corsHeaders(resHeaders) 
-        });
-        
+      if (res.body instanceof ReadableStream) {
+        const resHeaders = new Headers(res.headers)
+        resHeaders.set('Cache-Control', 'no-store')
+        resHeaders.delete('Content-Length'); // 流式传输不应该有固定长度
+        return new Response(res.body, { status: res.status, headers: corsHeaders(resHeaders)});
       } else {
-        const resHeaders = new Headers(res.headers);
-        return new Response(res.body, { 
-            status: res.status, 
-            headers: corsHeaders(resHeaders) 
-        });
+        corsHeaders(res.headers)
+        return res;
       }
     } catch (e) {
-      return new Response(`Error Proxy: ${e.message}`, { status: 502, headers: corsHeaders(new Headers()) });
+      return new Response(`Error Proxy: ${e.message}`, { status: 502, headers: corsHeaders() });
     }
 }
 
@@ -165,32 +123,6 @@ async function handleProxyOld1(request, targetUrl, searchParams, method) {
       }
     } catch (e) {
       return new Response(`Error Proxy: ${e.message}`, { status: 502, headers: corsHeaders(new Headers()) });
-    }
-}
-
-async function handleProxyOld(request, targetUrl, searchParams, method) {
-    const host = searchParams.get('host')
-    const referer = searchParams.get('referer')
-    const body = (method == 'GET' || method == 'HEAD') ? null : request.body; // GET 或 HEAD 请求，body 必须为 null
-    const headers = new Headers(request.headers);
-    headers.delete('host');
-    headers.delete('Accept-Encoding');
-    host && headers.set('Host', host.trim());
-    referer && headers.set('Referer', referer.trim());
-
-    try {
-      const res = await fetch(targetUrl, { method, headers, body}); // redirect: 'follow', // 自动处理重定向
-
-      if (res.body instanceof ReadableStream) {
-        const resHeaders = new Headers(res.headers)
-        resHeaders.set('Cache-Control', 'no-store')
-        return new Response(res.body, { status: res.status, headers: corsHeaders(resHeaders)});
-      } else {
-        corsHeaders(res.headers)
-        return res;
-      }
-    } catch (e) {
-      return new Response(`Error Proxy: ${e.message}`, { status: 502, headers: corsHeaders() });
     }
 }
 
