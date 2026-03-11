@@ -10,7 +10,7 @@ export async function onRequest({ request, params, env }) {
     const targetUrl = searchParams.get('url') || searchParams.get('u') || searchParams.get('targetUrl')
     const debug = searchParams.get('debug')
     
-    // let links = (await kv_x.get('links', {type: 'json'})) || {};
+    // let links = (await kv_cnb.get('links', {type: 'json'})) || {};
     let cnb_url = await kv_cnb.get('cnb_url')
 
 
@@ -24,10 +24,10 @@ export async function onRequest({ request, params, env }) {
     // } 
     const val = searchParams.get('value') || searchParams.get('val') || searchParams.get('v')
     if (path == '/setUrl') { // 设置KV
-      if (val) await kv_x.put('cnb_url', val)
+      if (val) await kv_cnb.put('cnb_url', val)
       return new Response(`设置成功: ${key}, ${val}`, { headers: { 'Content-Type': 'text/plain; charset=UTF-8' } })
     } else if (path == '/getUrl') { // 获取KV值
-      return new Response(await kv_x.get('cnb_url'), { headers: { 'Content-Type': 'text/plain; charset=UTF-8' } }) 
+      return new Response(await kv_cnb.get('cnb_url'), { headers: { 'Content-Type': 'text/plain; charset=UTF-8' } }) 
     }
     if (path == '/ip' || path == 'ip') { // 获取ip
       return new Response(request.eo?.clientIp || '');
