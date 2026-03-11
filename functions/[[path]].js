@@ -47,6 +47,75 @@ export async function onRequest({ request, params, env }) {
 }
 
 async function handleProxy(request, targetUrl, searchParams, method) {
+    const host = searchParams.get('host');
+    const referer = searchParams.get('referer');
+    const body = (method === 'GET' || method === 'HEAD') ? null : request.body;
+    const headers = new Headers(request.headers);
+    
+    headers.delete('host');
+    // 【关键1】明确告知上游：不压缩，并且期望接收 SSE 流
+    headers.set('Accept-Encoding', 'identity');
+    headers.set('Accept', 'text/event-stream'); 
+    
+    host && headers.set('Host', host.trim());
+    referer && headers.set('Referer', referer.trim());
+
+    try {
+      const res = await fetch(targetUrl, { method, headers, body });
+
+      // 判断是否为流式响应
+      const contentType = res.headers.get('content-type') || '';
+      const isStream = contentType.includes('text/event-stream') || contentType.includes('application/stream+json');
+
+      if (isStream && res.body) {
+        const resHeaders = new Headers(res.headers);
+        resHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        resHeaders.set('Connection', 'keep-alive');
+        resHeaders.set('X-Accel-Buffering', 'no');
+        resHeaders.delete('Content-Encoding');
+        resHeaders.delete('Content-Length');
+
+        // 【关键2】使用手动泵 (Manual Pumping) 替代 pipeTo
+        const { readable, writable } = new TransformStream();
+        const writer = writable.getWriter();
+        const reader = res.body.getReader();
+
+        // 异步执行读写循环，不阻塞当前响应返回
+        (async () => {
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) {
+                await writer.close();
+                break;
+              }
+              // 读到一个 chunk，立刻写入客户端
+              await writer.write(value);
+            }
+          } catch (err) {
+            console.error('Stream processing error:', err);
+            await writer.abort(err);
+          }
+        })();
+
+        return new Response(readable, { 
+            status: res.status, 
+            headers: corsHeaders(resHeaders) 
+        });
+        
+      } else {
+        const resHeaders = new Headers(res.headers);
+        return new Response(res.body, { 
+            status: res.status, 
+            headers: corsHeaders(resHeaders) 
+        });
+      }
+    } catch (e) {
+      return new Response(`Error Proxy: ${e.message}`, { status: 502, headers: corsHeaders(new Headers()) });
+    }
+}
+
+async function handleProxyOld1(request, targetUrl, searchParams, method) {
     const host = searchParams.get('host')
     const referer = searchParams.get('referer')
     const body = (method == 'GET' || method == 'HEAD') ? null : request.body; 
